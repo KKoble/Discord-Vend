@@ -3,15 +3,17 @@ from discord.ext import commands
 from discord import ui, app_commands
 import aiosqlite
 import os
+from dotenv import load_dotenv
 
-TOKEN = "여기에_토큰_입력"
+load_dotenv()
+TOKEN = os.getenv("TOKEN")
 DB_DIR = "db"
 
-EMOJI_NOTICE  = discord.PartialEmoji(name="Announce", id=이모지ID 넣어주세요)
-EMOJI_PRODUCT = discord.PartialEmoji(name="Product",  id=이모지ID 넣어주세요)
-EMOJI_BUY     = discord.PartialEmoji(name="Buy",      id=이모지ID 넣어주세요)
-EMOJI_CHARGE  = discord.PartialEmoji(name="Charge",   id=이모지ID 넣어주세요)
-EMOJI_ME      = discord.PartialEmoji(name="Info",     id=이모지ID 넣어주세요)
+EMOJI_NOTICE  = discord.PartialEmoji(name="Announce", id=1499680233127809124)
+EMOJI_PRODUCT = discord.PartialEmoji(name="Product",  id=1499680158377050283)
+EMOJI_BUY     = discord.PartialEmoji(name="Buy",      id=1499680201565798470)
+EMOJI_CHARGE  = discord.PartialEmoji(name="Charge",   id=1499680357023223989)
+EMOJI_ME      = discord.PartialEmoji(name="Info",     id=1499680088097034311)
 
 LOGO_URL = "https://i.pinimg.com/originals/13/8d/52/138d52a8f429510e2c16bd67990dae3c.jpg"
 
@@ -124,7 +126,8 @@ class VendingView(ui.LayoutView):
         gallery.add_item(media=img_url)
 
         self.add_item(ui.Container(
-            ui.TextDisplay(f"**{title}**"),
+            ui.TextDisplay(f"# {title}"),
+            ui.Separator(),
             ui.TextDisplay(desc),
             gallery,
             ui.Separator(),
@@ -784,9 +787,21 @@ async def vending_edit(interaction: discord.Interaction):
     desc    = cfg.get("desc",    "원하시는 버튼을 클릭해주세요.")
     img_url = cfg.get("img_url", LOGO_URL)
 
-    view = VendingEditView(interaction.guild.id, title, desc, img_url)
-    await interaction.response.send_message(view=view, ephemeral=True)
+    preview_view = ui.LayoutView(timeout=None)
+    gallery = ui.MediaGallery()
+    gallery.add_item(media=img_url)
+    preview_view.add_item(ui.Container(
+        ui.TextDisplay(f"# {title}"),
+        ui.Separator(),
+        ui.TextDisplay(desc),
+        gallery,
+        accent_color=discord.Color.blurple()
+    ))
 
+    edit_view = VendingEditView(interaction.guild.id, title, desc, img_url)
+
+    await interaction.response.send_message(view=preview_view, ephemeral=True)
+    await interaction.followup.send(view=edit_view, ephemeral=True)
 
 class VendingEditView(ui.LayoutView):
     def __init__(self, guild_id: int, title: str, desc: str, img_url: str):
@@ -796,16 +811,6 @@ class VendingEditView(ui.LayoutView):
         self.desc    = desc
         self.img_url = img_url
         self._render()
-
-    def _build_preview(self):
-        gallery = ui.MediaGallery()
-        gallery.add_item(media=self.img_url)
-        return ui.Container(
-            ui.TextDisplay(ensure_hash(self.title)),
-            ui.TextDisplay(self.desc),
-            gallery,
-            accent_color=discord.Color.blurple()
-        )
 
     def _render(self):
         self.clear_items()
@@ -822,9 +827,10 @@ class VendingEditView(ui.LayoutView):
         btn_save.callback   = self.on_save
         btn_cancel.callback = self.on_cancel
 
-        self.add_item(self._build_preview())
         self.add_item(ui.Container(
             ui.TextDisplay("# 자판기 수정"),
+            ui.Separator(),
+            ui.TextDisplay(f"제목: **{self.title}** 내용: {self.desc} 사진: {self.img_url}"),
             ui.Separator(),
             ui.ActionRow(btn_title, btn_desc, btn_img),
             ui.ActionRow(btn_save, btn_cancel),
@@ -842,7 +848,7 @@ class VendingEditView(ui.LayoutView):
 
     async def on_save(self, interaction: discord.Interaction):
         async with aiosqlite.connect(db_path(self.guild_id)) as db:
-            await db.execute("INSERT OR REPLACE INTO vending_config (key, value) VALUES (?, ?)", ("title",   ensure_hash(self.title)))
+            await db.execute("INSERT OR REPLACE INTO vending_config (key, value) VALUES (?, ?)", ("title",   self.title))
             await db.execute("INSERT OR REPLACE INTO vending_config (key, value) VALUES (?, ?)", ("desc",    self.desc))
             await db.execute("INSERT OR REPLACE INTO vending_config (key, value) VALUES (?, ?)", ("img_url", self.img_url))
             await db.commit()
@@ -862,7 +868,6 @@ class VendingEditView(ui.LayoutView):
             accent_color=discord.Color.red()
         ))
         await interaction.response.edit_message(view=self)
-
 
 class VendingEditModal(ui.Modal):
     value = ui.TextInput(label="값", max_length=500)
