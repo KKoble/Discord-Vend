@@ -13,7 +13,7 @@ EMOJI_BUY     = discord.PartialEmoji(name="Buy",      id=이모지ID 넣어주�
 EMOJI_CHARGE  = discord.PartialEmoji(name="Charge",   id=이모지ID 넣어주세요)
 EMOJI_ME      = discord.PartialEmoji(name="Info",     id=이모지ID 넣어주세요)
 
-LOGO_URL = "여기에_로고_URL"
+LOGO_URL = "https://i.pinimg.com/originals/13/8d/52/138d52a8f429510e2c16bd67990dae3c.jpg"
 
 os.makedirs(DB_DIR, exist_ok=True)
 
