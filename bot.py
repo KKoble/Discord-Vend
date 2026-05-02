@@ -3,7 +3,9 @@ from discord.ext import commands
 from discord import ui, app_commands
 import aiosqlite
 import os
+
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -58,6 +60,10 @@ async def init_db(guild_id: int):
                 channel_id INTEGER
             );
             CREATE TABLE IF NOT EXISTS vending_config (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
+            CREATE TABLE IF NOT EXISTS server_config (
                 key   TEXT PRIMARY KEY,
                 value TEXT
             );
@@ -166,7 +172,7 @@ class VendingView(ui.LayoutView):
         )
 
     async def on_charge(self, interaction: discord.Interaction):
-        await interaction.response.send_message("충전은 준비 중입니다.", ephemeral=True)
+        await interaction.response.send_modal(ChargeModal(interaction.guild.id, interaction.user))
 
     async def on_me(self, interaction: discord.Interaction):
         await ensure_user(interaction.guild.id, interaction.user)
@@ -742,6 +748,7 @@ async def charge_cmd(interaction: discord.Interaction, user: discord.Member, amo
 @app_commands.choices(log_type=[
     app_commands.Choice(name="구매로그", value="구매"),
     app_commands.Choice(name="충전로그", value="충전"),
+    app_commands.Choice(name="충전확인로그", value="충전확인"),
 ])
 async def log_channel_set(interaction: discord.Interaction, log_type: str, channel: discord.TextChannel):
     async with aiosqlite.connect(db_path(interaction.guild.id)) as db:
@@ -768,9 +775,11 @@ async def vending(interaction: discord.Interaction):
 async def on_ready():
     for guild in bot.guilds:
         await init_db(guild.id)
+        bot.tree.clear_commands(guild=guild)
+        await bot.tree.sync(guild=guild)
     synced = await bot.tree.sync()
     print(f"로그인됨: {bot.user}")
-    print(f"길드 명령어 {len(synced)}개 동기화됨")
+    print(f"전역 명령어 {len(synced)}개 동기화됨")
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
@@ -830,7 +839,7 @@ class VendingEditView(ui.LayoutView):
         self.add_item(ui.Container(
             ui.TextDisplay("# 자판기 수정"),
             ui.Separator(),
-            ui.TextDisplay(f"제목: **{self.title}** 내용: {self.desc} 사진: {self.img_url}"),
+            ui.TextDisplay(f"제목: **{self.title}**\n내용: {self.desc}\n사진: {self.img_url}"),
             ui.Separator(),
             ui.ActionRow(btn_title, btn_desc, btn_img),
             ui.ActionRow(btn_save, btn_cancel),
@@ -889,5 +898,200 @@ class VendingEditModal(ui.Modal):
             self.parent.img_url = self.value.value
         self.parent._render()
         await interaction.response.edit_message(view=self.parent)
+
+
+async def get_server_config(guild_id: int) -> dict:
+    async with aiosqlite.connect(db_path(guild_id)) as db:
+        async with db.execute("SELECT key, value FROM server_config") as cur:
+            rows = await cur.fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+@bot.tree.command(name="서버설정", description="서버 충전 설정을 합니다.")
+@admin_check()
+@app_commands.describe(계좌번호="계좌번호", 이름="예금주 이름", 최소충전금액="최소 충전 금액")
+async def server_config_cmd(interaction: discord.Interaction, 계좌번호: str, 이름: str, 최소충전금액: int):
+    async with aiosqlite.connect(db_path(interaction.guild.id)) as db:
+        await db.execute("INSERT OR REPLACE INTO server_config (key, value) VALUES (?, ?)", ("account", 계좌번호))
+        await db.execute("INSERT OR REPLACE INTO server_config (key, value) VALUES (?, ?)", ("owner",   이름))
+        await db.execute("INSERT OR REPLACE INTO server_config (key, value) VALUES (?, ?)", ("min_charge", str(최소충전금액)))
+        await db.commit()
+    await interaction.response.send_message(
+        f"설정 완료!\n계좌: `{계좌번호}` | 예금주: `{이름}` | 최소충전금액: `{최소충전금액:,}원`",
+        ephemeral=True
+    )
+
+
+class ChargeModal(ui.Modal, title="충전하기"):
+    depositor = ui.TextInput(label="입금자명", placeholder="예: 홍길동")
+    amount    = ui.TextInput(label="충전할 금액", placeholder="예: 10000")
+
+    def __init__(self, guild_id: int, user: discord.Member):
+        super().__init__()
+        self.guild_id = guild_id
+        self.user     = user
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            amount = int(self.amount.value.replace(",", ""))
+        except ValueError:
+            await interaction.response.send_message("금액은 숫자만 입력하세요.", ephemeral=True)
+            return
+
+        cfg = await get_server_config(self.guild_id)
+        min_charge = int(cfg.get("min_charge", 0))
+
+        if amount < min_charge:
+            await interaction.response.send_message(
+                f"최소 충전 금액은 {min_charge:,}원입니다.", ephemeral=True
+            )
+            return
+
+        view = ChargeAgreeView(self.guild_id, self.user, self.depositor.value, amount, cfg)
+        await interaction.response.send_message(view=view, ephemeral=True)
+
+
+class ChargeAgreeView(ui.LayoutView):
+    def __init__(self, guild_id, user, depositor, amount, cfg):
+        super().__init__(timeout=180)
+        self.guild_id  = guild_id
+        self.user      = user
+        self.depositor = depositor
+        self.amount    = amount
+        self.cfg       = cfg
+
+        btn_agree = ui.Button(label="동의하기", style=discord.ButtonStyle.success, emoji="✅")
+        btn_agree.callback = self.on_agree
+
+        self.add_item(ui.Container(
+            ui.TextDisplay("# 충전 전 안내"),
+            ui.Separator(),
+            ui.TextDisplay("불법 자금 송금 시 법적 대응합니다.\n제 3자 입금 금지 — 본인 계좌로만 입금 바랍니다.\n\n위 내용을 확인하셨으면 동의하기 버튼을 눌러주세요."),
+            ui.Separator(),
+            ui.ActionRow(btn_agree),
+            accent_color=discord.Color.yellow()
+        ))
+
+    async def on_agree(self, interaction: discord.Interaction):
+        account = self.cfg.get("account", "미설정")
+        owner   = self.cfg.get("owner",   "미설정")
+
+        info_view = ChargeInfoView(
+            self.guild_id, self.user, self.depositor, self.amount, account, owner
+        )
+        await interaction.response.send_message(view=info_view, ephemeral=True)
+
+        log_ch_id = await get_log_channel(interaction.guild.id, "충전확인")
+        if not log_ch_id:
+            return
+        ch = interaction.guild.get_channel(log_ch_id)
+        if not ch:
+            return
+
+        approve_view = ChargeApproveView(self.guild_id, self.user, self.depositor, self.amount)
+        await ch.send(view=approve_view)
+
+
+class ChargeInfoView(ui.LayoutView):
+    def __init__(self, guild_id, user, depositor, amount, account, owner):
+        super().__init__(timeout=None)
+        self.guild_id  = guild_id
+        self.user      = user
+        self.depositor = depositor
+        self.amount    = amount
+        self.account   = account
+        self.owner     = owner
+        self._render(done=False)
+
+    def _render(self, done: bool):
+        self.clear_items()
+        btn_done = ui.Button(label="입금 완료", style=discord.ButtonStyle.success, disabled=done)
+        btn_done.callback = self.on_done
+
+        self.add_item(ui.Container(
+            ui.TextDisplay("# 충전 정보"),
+            ui.Separator(),
+            ui.TextDisplay(f"계좌번호\n{self.account} | {self.owner}"),
+            ui.Separator(),
+            ui.TextDisplay(f"입금자명　충전 금액\n{self.depositor}　　　{self.amount:,}원"),
+            ui.Separator(),
+            ui.ActionRow(btn_done),
+            accent_color=discord.Color.blurple()
+        ))
+
+    async def on_done(self, interaction: discord.Interaction):
+        self._render(done=True)
+        await interaction.response.edit_message(view=self)
+
+        log_ch_id = await get_log_channel(self.guild_id, "충전확인")
+        if not log_ch_id:
+            return
+        ch = interaction.guild.get_channel(log_ch_id)
+        if not ch:
+            return
+        await ch.send(f"💰 {self.user.mention}님이 입금 완료 버튼을 눌렀습니다. ({self.depositor} / {self.amount:,}원)")
+
+
+class ChargeApproveView(ui.LayoutView):
+    def __init__(self, guild_id, user, depositor, amount):
+        super().__init__(timeout=None)
+        self.guild_id  = guild_id
+        self.user      = user
+        self.depositor = depositor
+        self.amount    = amount
+        self._render(done=False)
+
+    def _render(self, done: bool):
+        self.clear_items()
+
+        btn_approve = ui.Button(label="승인", style=discord.ButtonStyle.success, disabled=done)
+        btn_reject  = ui.Button(label="거절", style=discord.ButtonStyle.danger,  disabled=done)
+        btn_approve.callback = self.on_approve
+        btn_reject.callback  = self.on_reject
+
+        self.add_item(ui.Container(
+            ui.TextDisplay("# 충전 요청"),
+            ui.Separator(),
+            ui.TextDisplay(f"닉네임　ID　　　　　　　　입금자명\n{self.user.display_name}　{self.user.id}　{self.depositor}"),
+            ui.TextDisplay(f"금액\n{self.amount:,}원"),
+            ui.Separator(),
+            ui.ActionRow(btn_approve, btn_reject),
+            accent_color=discord.Color.orange()
+        ))
+
+    async def on_approve(self, interaction: discord.Interaction):
+        async with aiosqlite.connect(db_path(self.guild_id)) as db:
+            await db.execute(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                (self.amount, self.user.id)
+            )
+            await db.commit()
+
+        self._render(done=True)
+        await interaction.response.edit_message(view=self)
+
+        try:
+            await self.user.send(f"✅ {self.amount:,}원이 충전되었습니다.")
+        except discord.Forbidden:
+            pass
+
+        log_ch_id = await get_log_channel(self.guild_id, "충전")
+        if log_ch_id:
+            ch = interaction.guild.get_channel(log_ch_id)
+            if ch:
+                await ch.send(embed=discord.Embed(
+                    title="충전 완료",
+                    description=f"{self.user.mention} | +{self.amount:,}원 | 승인자: {interaction.user.mention}",
+                    color=discord.Color.green()
+                ))
+
+    async def on_reject(self, interaction: discord.Interaction):
+        self._render(done=True)
+        await interaction.response.edit_message(view=self)
+
+        try:
+            await self.user.send(f"❌ {self.amount:,}원 충전 요청이 거절되었습니다.")
+        except discord.Forbidden:
+            pass
 
 bot.run(TOKEN)
