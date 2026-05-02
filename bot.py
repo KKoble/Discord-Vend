@@ -11,11 +11,11 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 DB_DIR = "db"
 
-EMOJI_NOTICE  = discord.PartialEmoji(name="Announce", id=1499680233127809124)
-EMOJI_PRODUCT = discord.PartialEmoji(name="Product",  id=1499680158377050283)
-EMOJI_BUY     = discord.PartialEmoji(name="Buy",      id=1499680201565798470)
-EMOJI_CHARGE  = discord.PartialEmoji(name="Charge",   id=1499680357023223989)
-EMOJI_ME      = discord.PartialEmoji(name="Info",     id=1499680088097034311)
+EMOJI_NOTICE  = discord.PartialEmoji(name="Announce", id=이모지ID를 넣어주세요)
+EMOJI_PRODUCT = discord.PartialEmoji(name="Product",  id=이모지ID를 넣어주세요)
+EMOJI_BUY     = discord.PartialEmoji(name="Buy",      id=이모지ID를 넣어주세요)
+EMOJI_CHARGE  = discord.PartialEmoji(name="Charge",   id=이모지ID를 넣어주세요)
+EMOJI_ME      = discord.PartialEmoji(name="Info",     id=이모지ID를 넣어주세요)
 
 LOGO_URL = "https://i.pinimg.com/originals/13/8d/52/138d52a8f429510e2c16bd67990dae3c.jpg"
 
