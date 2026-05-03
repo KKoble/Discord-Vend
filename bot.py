@@ -3,9 +3,7 @@ from discord.ext import commands
 from discord import ui, app_commands
 import aiosqlite
 import os
-
 from dotenv import load_dotenv
-import os
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
